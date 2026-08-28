@@ -1,0 +1,94 @@
+# Dockerfile.preview — the EDITABLE dev image founding.dev boots for a preview.
+#
+# WHAT WE TRIED FIRST, AND WHY IT DID NOT WORK
+# The obvious shape was the one the production stack uses: PostgreSQL, Redis,
+# RabbitMQ and memcached as their own containers, with the app pointed at them.
+# Zulip exposes every one of those as a setting, so it looked like a
+# settings patch. It is not. Booted on a real machine, it failed twice:
+#
+#   psql -h localhost … ERROR: template database "zulip_base" does not exist
+#   You need to run tools/run-dev inside a Zulip dev environment.
+#
+# Zulip's dev database tooling connects to localhost and expects template
+# databases that only its own local PostgreSQL setup creates, and run-dev checks
+# for a full dev provision. Splitting the services out means forking that tooling
+# as well as the settings — and re-forking it on every upstream rebase.
+#
+# So this image follows upstream's actual dev model: everything runs in here.
+#
+# It also uses upstream's systemctl shim, and that was not the first plan either.
+# Starting the daemons by hand from the entrypoint is fine at RUN time, but
+# provision itself installs RabbitMQ and then immediately configures it:
+#
+#   Subcommand of tools/lib/provision_inner.py failed with exit status 69:
+#     sudo -- scripts/setup/configure-rabbitmq
+#
+# configure-rabbitmq needs a running broker, during the image build, before any
+# entrypoint exists. That is the chicken-and-egg docker-systemctl-replacement was
+# written for, so upstream's choice is load-bearing rather than incidental. It is
+# pinned to the same version and checksum they pin, because it is fetched over the
+# network into a root-owned path at build time.
+#
+# linux/amd64 pinned deliberately. Fly machines are amd64, and an arm64 image
+# pulls happily then refuses to run, surfacing as "we couldn't start your app"
+# with nothing naming the cause. That is how the first WeKan template shipped.
+FROM --platform=linux/amd64 ubuntu:24.04
+
+ENV LANG="C.UTF-8" \
+    DEBIAN_FRONTEND=noninteractive \
+    SKIP_VENV_SHELL_WARNING=1
+
+RUN apt-get -q update \
+ && apt-get -q dist-upgrade -y \
+ && apt-get -q install --no-install-recommends -y \
+      ca-certificates curl git locales python3 sudo tzdata \
+ && touch /var/mail/ubuntu && chown ubuntu /var/mail/ubuntu && userdel -r ubuntu \
+ && useradd -d /home/zulip -m zulip -u 1000 \
+ && echo 'zulip ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers \
+ && rm -rf /var/lib/apt/lists/*
+
+# docker-systemctl-replacement, pinned and checksummed exactly as
+# tools/setup/dev-vagrant-docker/Dockerfile does. policy-rc.d is stubbed so apt
+# does not try to start daemons mid-install; the postgresql template-unit symlink
+# works around gdraheim/docker-systemctl-replacement#62.
+USER root
+RUN curl -fLsS --retry 3 --output-dir /bin -O 'https://raw.githubusercontent.com/gdraheim/docker-systemctl-replacement/v1.7.1097/files/docker/systemctl3.py' -O 'https://raw.githubusercontent.com/gdraheim/docker-systemctl-replacement/v1.7.1097/files/docker/journalctl3.py' \
+ && printf '5f5a47f321c7a8881dfd01f774106dc4012d664bee238eada86a7112674fea93  /bin/systemctl3.py\n16a52fe484d7c0fca464c82a56de58980440362942482c0d1fbc424e69f8f833  /bin/journalctl3.py\n' | sha256sum -c \
+ && chmod +x /bin/systemctl3.py /bin/journalctl3.py \
+ && dpkg-divert --add --rename /bin/systemctl && ln -s systemctl3.py /bin/systemctl \
+ && dpkg-divert --add --rename /bin/journalctl && ln -s journalctl3.py /bin/journalctl \
+ && ln -nsf /bin/true /usr/sbin/policy-rc.d \
+ && mkdir -p /etc/systemd/system/multi-user.target.wants \
+ && ln -nsf /lib/systemd/system/postgresql@.service \
+      /etc/systemd/system/multi-user.target.wants/postgresql@16-main.service
+
+USER zulip
+WORKDIR /home/zulip/zulip
+
+# .git comes along because provision refuses to run without it ("No Zulip Git
+# repository present!") — it reads the repo for version information. Removed in
+# the same layer, so history costs build context but never image size; at runtime
+# the bind-mounted source brings the customer's own.
+#
+# A FULL provision, not --build-release-tarball-only: that flag builds an
+# environment capable of producing a release tarball, which is not the same thing
+# as a runnable dev environment, and run-dev rejects it.
+#
+# --skip-dev-db-build because no PostgreSQL is running during a docker build. The
+# entrypoint builds the database on first boot instead, once the daemon is up.
+COPY --chown=zulip:zulip . /home/zulip/zulip
+# Services must be RUNNING while provision configures them, so start them through
+# the shim first. postgresql's unit is a template (postgresql@14-main), which the
+# shim cannot enable itself - hence the explicit symlink.
+# The pre-start that used to live here was a no-op and said so loudly: the units
+# do not exist yet, because provision is what installs them. What actually made
+# provision work is the shim above - provision calls systemctl itself when it
+# needs RabbitMQ running before configure-rabbitmq.
+USER zulip
+RUN ./tools/provision --skip-dev-db-build \
+ && rm -rf /home/zulip/zulip/.git
+
+EXPOSE 9991
+
+COPY --chown=zulip:zulip tools/fdev-preview-entrypoint.sh /home/zulip/fdev-preview-entrypoint.sh
+CMD ["/home/zulip/fdev-preview-entrypoint.sh"]

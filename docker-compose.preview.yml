@@ -1,0 +1,37 @@
+# docker-compose.preview.yml - the EDITABLE stack founding.dev boots on import.
+#
+# ONE container, deliberately. Zulip's dev environment runs PostgreSQL, Redis,
+# RabbitMQ and memcached locally and its database tooling assumes it (it connects
+# to localhost and builds template databases there). Splitting them out was tried
+# and failed on a real machine; see the header of Dockerfile.preview.
+#
+# The source is bind-mounted so the agent's edits are live and run-dev reloads
+# them. The expensive directories are named volumes so the bind mount cannot
+# shadow what the image baked - without them the container starts with an empty
+# venv and run-dev dies on its first import.
+services:
+  zulip:
+    build:
+      context: .
+      dockerfile: Dockerfile.preview
+    restart: unless-stopped
+    environment:
+      # run-dev builds absolute URLs from this; rewritten by the platform to the
+      # preview's real hostname. The default only makes sense on a laptop.
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost:9991}
+      FDEV_STATE_DIR: /srv/zulip-state
+    volumes:
+      - .:/home/zulip/zulip
+      - zulip-preview-venv:/home/zulip/zulip/.venv
+      - zulip-preview-node-modules:/home/zulip/zulip/node_modules
+      # Customer data: the databases themselves, and the first-boot marker.
+      - zulip-preview-pgdata:/var/lib/postgresql
+      - zulip-preview-state:/srv/zulip-state
+    ports:
+      - "9991:9991"
+
+volumes:
+  zulip-preview-venv:
+  zulip-preview-node-modules:
+  zulip-preview-pgdata:
+  zulip-preview-state:

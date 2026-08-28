@@ -1,0 +1,12 @@
+# NOTE: .git is deliberately NOT excluded.
+#
+# tools/provision refuses to run without it ("No Zulip Git repository present!"),
+# which is why upstream's docker-zulip clones inside the image instead of copying
+# a tree in. Dockerfile.preview removes it again once provision has finished, so
+# the history costs build context but not image size.
+.venv
+node_modules
+var/log
+var/coverage
+*.pyc
+__pycache__
