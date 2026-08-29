@@ -11,9 +11,15 @@
 # venv and run-dev dies on its first import.
 services:
   zulip:
-    build:
-      context: .
-      dockerfile: Dockerfile.preview
+    # `image:`, never `build:`. CI already built this, and the platform injects
+    # PREVIEW_IMAGE from the descriptor's previewImage (startup.sh reads it and
+    # re-pulls when the tag changes). A `build:` here would put Zulip's ~5 minute
+    # provision back on the customer's machine on every single import, which is
+    # the entire thing the prebuilt image exists to avoid.
+    #
+    # The local default is only for `docker compose up` on a laptop after
+    # building Dockerfile.preview by hand.
+    image: ${PREVIEW_IMAGE:-zulip-preview:local}
     restart: unless-stopped
     environment:
       # run-dev builds absolute URLs from this; rewritten by the platform to the
