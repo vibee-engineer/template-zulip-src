@@ -127,6 +127,73 @@ for i in $(seq 1 90); do
     sleep 1
 done
 
+# Re-point the database role at THIS disk's password, for the same reason
+# RabbitMQ is reconfigured above: the credential and the service that checks it
+# were created at two different times.
+#
+# The postgres cluster is baked into the image, so its `zulip` role carries the
+# password from zproject/dev-secrets.conf as it existed AT BUILD TIME. That file
+# is generated fresh per tenant on first boot (see above - it has to be, or every
+# customer would share one secret_key), so the two disagree the moment the
+# generated file is the one Django reads, and every query fails with:
+#
+#   FATAL: password authentication failed for user "zulip"
+#
+# Syncing on every boot rather than only on the first keeps this true after a
+# secrets file is regenerated or restored from a different disk. It is a no-op
+# when they already agree.
+PGPW=$(sed -n 's/^local_database_password[[:space:]]*=[[:space:]]*//p' zproject/dev-secrets.conf | head -1)
+if [ -n "$PGPW" ]; then
+    log "syncing the postgres credentials with this disk's secrets"
+    PGPW_SQL=$(printf '%s' "$PGPW" | sed "s/'/''/g")
+    # Both roles, because rebuild-dev-database builds zulip AND zulip_test.
+    for role in zulip zulip_test; do
+        # Piped in on stdin rather than passed with -c, so the password never
+        # appears in the process list where any other container process could
+        # read it. Single quotes are doubled, which is how SQL escapes them.
+        printf "ALTER ROLE %s WITH PASSWORD '%s';\n" "$role" "$PGPW_SQL" \
+            | sudo -n -u postgres psql -qtA -f - >/dev/null 2>&1 \
+            || log "  WARN: could not set the password for role $role"
+    done
+    # ~/.pgpass is baked into the IMAGE, outside the repo, so unlike the secrets
+    # file it is not replaced by the bind mount - it silently keeps the
+    # build-time password. The psql client prefers it over anything else, so
+    # leaving it stale fails every command line tool with "password
+    # authentication failed" while Django itself works, which is a genuinely
+    # confusing split. rebuild-dev-database is one of those tools.
+    umask 077
+    printf '*:*:*:zulip:%s\n*:*:*:zulip_test:%s\n' "$PGPW" "$PGPW" > "$HOME/.pgpass"
+    chmod 600 "$HOME/.pgpass"
+else
+    log "WARN: no local_database_password in zproject/dev-secrets.conf"
+fi
+
+# Regenerate the two build products that provision writes INSIDE the repo and
+# that no named volume can cover, because they live in directories the customer
+# genuinely does edit (locale/) or that are mostly tracked files (static/images).
+# A named volume over either would freeze the image's copy and silently discard
+# the customer's own changes to everything else in the directory.
+#
+# Both are guarded on exactly the file provision itself checks for, so they run
+# once on a fresh disk and are skipped on every boot after.
+#
+# locale/language_name_map.json is NOT cosmetic: without it the home page raises
+# FileNotFoundError from deep inside zerver/lib/i18n.py, so the app answers 500
+# to the very first request a customer makes while the container looks healthy.
+if [ ! -f locale/language_name_map.json ]; then
+    log "compiling translations (provision built these; the source mount hides them)"
+    ./manage.py compilemessages --ignore='*' 2>&1 | tail -2 | sed 's/^/  i18n: /' \
+        || log "  WARN: compilemessages failed - the app will 500 on every page"
+fi
+
+# The landing pages (/hello and friends) reference these; the app itself does
+# not, so a failure here is logged and stepped over rather than fatal.
+if [ ! -d static/images/landing-page/hello/generated ]; then
+    log "generating landing page images"
+    ./tools/setup/generate_landing_page_images.py >/dev/null 2>&1 \
+        || log "  WARN: could not generate landing page images"
+fi
+
 # The dev database is built once, and the marker lives on the durable volume: a
 # machine replacement must not rebuild an empty database over a customer's data.
 mkdir -p "$FDEV_STATE_DIR"
