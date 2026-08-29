@@ -20,7 +20,20 @@ services:
     # Zulip's own PostgreSQL image, not stock postgres. It carries the full-text
     # search extensions Zulip requires; swapping it gives an app that installs
     # cleanly and then fails on the first search.
-    image: zulip/zulip-postgresql:16
+    #
+    # PINNED TO 14 BECAUSE THAT IS THE NEWEST TAG THAT EXISTS. The obvious
+    # guess - matching the 16 in Dockerfile.prod - is a tag zulip has never
+    # published: the repository has latest, 14, 13, 12, 11, 10, and `latest`
+    # has not moved since 2024 while 14 is still updated. It must also match
+    # --postgresql-version in Dockerfile.prod; upstream docker-zulip pairs 14
+    # with this same image, which is the combination they actually test.
+    #
+    # Worth knowing how this fails, because the error names nothing useful:
+    # Fly rejects the machine with "platform not found: linux/amd64", which
+    # sounds like an architecture problem and is really "that image does not
+    # exist". The publish builds and pushes perfectly first, so the failure
+    # lands ~20 minutes in, after everything that looks like the hard part.
+    image: zulip/zulip-postgresql:14
     restart: unless-stopped
     environment:
       POSTGRES_DB: zulip

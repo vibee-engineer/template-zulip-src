@@ -77,7 +77,7 @@ RUN \
  && rm -f zulip-server-founding.tar.gz \
  && mv zulip-server-founding zulip \
  && /root/zulip/scripts/setup/install --hostname="founding.local" --email="support@founding.dev" \
-      --puppet-classes="zulip::profile::docker" --postgresql-version=16 \
+      --puppet-classes="zulip::profile::docker" --postgresql-version=14 \
     # The installer writes a hostname and secrets we do not want baked into an
     # image that every tenant starts from: the entrypoint regenerates them per
     # deployment from the real public URL and this app's own secrets.
