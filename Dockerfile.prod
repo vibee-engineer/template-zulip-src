@@ -1,0 +1,104 @@
+# Dockerfile.prod - the PRODUCTION image founding.dev's Publish builds.
+#
+# WHY THIS EXISTS INSTEAD OF ghcr.io/zulip/zulip-server
+# Upstream publishes a perfectly good production image, and docker-zulip's compose
+# uses it. Deploying that here would be silently destructive: a customer imports
+# this template, spends an afternoon having the agent change their organisation's
+# settings and branding, presses Publish, and gets stock Zulip - because the
+# published image contains none of their edits. No error, no warning. That exact
+# mistake shipped once already on another template.
+#
+# So production builds from THIS working tree. The structure is docker-zulip's
+# two-stage build (Apache-2.0, same licence), with one change that is the whole
+# point: stage one COPYs the tree instead of `git clone`-ing a pinned ref.
+
+# ---- stage 1: build a release tarball from the customer's source -------------
+# linux/amd64 pinned: Fly machines are amd64, and an arm64 image pulls happily
+# then refuses to run, surfacing as "we couldn't start your app" with nothing
+# naming the cause.
+FROM --platform=linux/amd64 ubuntu:24.04 AS base
+
+ENV LANG="C.UTF-8" \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get -q update \
+ && apt-get -q dist-upgrade -y \
+ && apt-get -q install --no-install-recommends -y \
+      ca-certificates curl git locales python3 sudo tzdata \
+ && touch /var/mail/ubuntu && chown ubuntu /var/mail/ubuntu && userdel -r ubuntu \
+ && useradd -d /home/zulip -m zulip -u 1000 \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM base AS build
+
+RUN echo 'zulip ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# The same systemctl shim the preview image needs, and for the same reason:
+# provision runs configure-rabbitmq, which needs a live broker during the build.
+# Pinned to the version and checksum upstream pins.
+RUN curl -fLsS --retry 3 --output-dir /bin -O 'https://raw.githubusercontent.com/gdraheim/docker-systemctl-replacement/v1.7.1097/files/docker/systemctl3.py' -O 'https://raw.githubusercontent.com/gdraheim/docker-systemctl-replacement/v1.7.1097/files/docker/journalctl3.py' \
+ && printf '5f5a47f321c7a8881dfd01f774106dc4012d664bee238eada86a7112674fea93  /bin/systemctl3.py\n16a52fe484d7c0fca464c82a56de58980440362942482c0d1fbc424e69f8f833  /bin/journalctl3.py\n' | sha256sum -c \
+ && chmod +x /bin/systemctl3.py /bin/journalctl3.py \
+ && dpkg-divert --add --rename /bin/systemctl && ln -s systemctl3.py /bin/systemctl \
+ && dpkg-divert --add --rename /bin/journalctl && ln -s journalctl3.py /bin/journalctl \
+ && ln -nsf /bin/true /usr/sbin/policy-rc.d
+
+USER zulip
+WORKDIR /home/zulip/zulip
+
+# THE ONE CHANGE FROM docker-zulip: their Dockerfile does
+#     RUN git clone "$ZULIP_GIT_URL" zulip && git checkout "$ZULIP_GIT_REF"
+# which builds whatever is on GitHub. We build what is in the customer's
+# repository, which is the only way their edits reach production.
+#
+# .git travels with it because provision refuses to run without one ("No Zulip
+# Git repository present!"); it never reaches the final image, which is assembled
+# from the tarball alone.
+COPY --chown=zulip:zulip . /home/zulip/zulip
+
+RUN SKIP_VENV_SHELL_WARNING=1 ./tools/provision --build-release-tarball-only \
+ && uv run --no-sync ./tools/build-release-tarball founding \
+ && mv /tmp/tmp.*/zulip-server-founding.tar.gz /tmp/zulip-server-founding.tar.gz
+
+# ---- stage 2: install that tarball into a clean production image -------------
+FROM base
+
+ENV DATA_DIR="/data"
+
+COPY --from=build /tmp/zulip-server-founding.tar.gz /root/
+
+WORKDIR /root
+RUN \
+    # Supervisor owns nginx in this image; the init script would fight it.
+    dpkg-divert --add --rename /etc/init.d/nginx \
+ && ln -s /bin/true /etc/init.d/nginx \
+ && mkdir -p "$DATA_DIR" \
+ && tar -xf zulip-server-founding.tar.gz \
+ && rm -f zulip-server-founding.tar.gz \
+ && mv zulip-server-founding zulip \
+ && /root/zulip/scripts/setup/install --hostname="founding.local" --email="support@founding.dev" \
+      --puppet-classes="zulip::profile::docker" --postgresql-version=16 \
+    # The installer writes a hostname and secrets we do not want baked into an
+    # image that every tenant starts from: the entrypoint regenerates them per
+    # deployment from the real public URL and this app's own secrets.
+ && rm -f /etc/zulip/zulip-secrets.conf /etc/zulip/settings.py \
+    # Zulip reads /.dockerenv as RUNNING_IN_DOCKER to tailor its error messages to
+    # SETTING_* variables. Docker creates it; other runtimes do not, so bake it.
+ && touch /.dockerenv \
+ && apt-get -qq autoremove --purge -y \
+ && apt-get -qq clean \
+ && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Vendored from docker-zulip - see founding/docker/README.md for why it cannot
+# simply be referenced.
+COPY founding/docker/entrypoint.sh /sbin/entrypoint.sh
+RUN chmod +x /sbin/entrypoint.sh
+
+VOLUME ["$DATA_DIR"]
+EXPOSE 80 443
+
+HEALTHCHECK --interval=15s --timeout=5s --retries=10 --start-period=300s \
+    CMD ["curl", "-isfL", "--insecure", "http://localhost/health"]
+
+ENTRYPOINT ["/sbin/entrypoint.sh"]
+CMD ["app:run"]
