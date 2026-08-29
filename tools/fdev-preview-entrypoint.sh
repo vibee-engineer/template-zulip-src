@@ -46,6 +46,29 @@ fi
 export EXTERNAL_HOST
 log "EXTERNAL_HOST=$EXTERNAL_HOST"
 
+# zproject/dev-secrets.conf carries this instance's secret_key, and Zulip's
+# development settings refuse to import without it ("Mandatory secret
+# \"secret_key\" is not set"). provision writes it during the image build, but it
+# lives INSIDE the repo, so the bind mount that makes the source editable hides
+# the image's copy - and it is gitignored, so it is not in the template either.
+#
+# Generating it per instance is the correct behaviour, not a workaround. A
+# secret_key baked into the shared preview image would be identical for every
+# tenant, and anyone able to pull that image could forge session cookies for
+# any other customer's chat.
+#
+# EXTERNAL_HOST must already be exported: generate_secrets imports the settings
+# module, which parses it as a URL and asserts on an empty value.
+if [ ! -f zproject/dev-secrets.conf ]; then
+  log "generating zproject/dev-secrets.conf (first boot on this disk)"
+  ./scripts/setup/generate_secrets.py --development \
+    || log "WARN: generate_secrets failed - the server will not start"
+else
+  # Idempotent top-up: it only fills in secrets that are missing, so a Zulip
+  # upgrade that adds a new mandatory one self-heals instead of crash-looping.
+  ./scripts/setup/generate_secrets.py --development >/dev/null 2>&1 || true
+fi
+
 # Start the four daemons through the same systemctl shim the image was built
 # with. Using the shim rather than pg_ctlcluster/redis-server/... by hand keeps
 # boot identical to provision-time, so a service that came up during the build

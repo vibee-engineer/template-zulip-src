@@ -29,6 +29,12 @@ services:
     # building Dockerfile.preview by hand.
     image: ${PREVIEW_IMAGE:-zulip-preview:local}
     restart: unless-stopped
+    # run-dev calls os.setpgrp(), which fails with EPERM when the caller is
+    # already a process-group leader - which PID 1 always is. Without an init the
+    # entrypoint execs into run-dev as PID 1 and every boot dies on
+    # "PermissionError: [Errno 1] Operation not permitted". docker-init takes
+    # PID 1 instead, and reaps the dev server's children as a bonus.
+    init: true
     # Run the entrypoint from the BIND-MOUNTED repo, not the image's baked copy
     # at /home/zulip/fdev-preview-entrypoint.sh. Two reasons: boot behaviour then
     # travels with the source the customer owns and the agent can edit, and a fix
@@ -48,6 +54,23 @@ services:
       - .:/home/zulip/zulip
       - zulip-preview-venv:/home/zulip/zulip/.venv
       - zulip-preview-node-modules:/home/zulip/zulip/node_modules
+      # The rest of what provision BUILDS INTO the image underneath the repo
+      # path. The bind mount above replaces the whole directory, so anything the
+      # image generated inside it disappears unless a named volume re-exposes it
+      # (docker seeds a named volume from the image on first use).
+      #
+      # These are not optional niceties. static/generated holds emoji_codes.json,
+      # whose absence kills the server on import with a FileNotFoundError several
+      # frames deep in the markdown module - which reads like a code bug and is
+      # not one.
+      - zulip-preview-static-generated:/home/zulip/zulip/static/generated
+      - zulip-preview-web-generated:/home/zulip/zulip/web/generated
+      - zulip-preview-starlight-node-modules:/home/zulip/zulip/starlight_help/node_modules
+      # var/ is BOTH generated scaffolding and customer data - it is where dev
+      # uploads land. It must persist per tenant, and it must never be named in
+      # this template's goldenVolume.shareVolumes: sharing it would hand every
+      # customer the files uploaded on the machine the golden disk was built on.
+      - zulip-preview-var:/home/zulip/zulip/var
       # Customer data: the databases themselves, and the first-boot marker.
       - zulip-preview-pgdata:/var/lib/postgresql
       - zulip-preview-state:/srv/zulip-state
@@ -57,5 +80,9 @@ services:
 volumes:
   zulip-preview-venv:
   zulip-preview-node-modules:
+  zulip-preview-static-generated:
+  zulip-preview-web-generated:
+  zulip-preview-starlight-node-modules:
+  zulip-preview-var:
   zulip-preview-pgdata:
   zulip-preview-state:
