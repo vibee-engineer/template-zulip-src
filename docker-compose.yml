@@ -1,4 +1,12 @@
-# docker-compose.preview.yml - the EDITABLE stack founding.dev boots on import.
+# docker-compose.yml - the EDITABLE stack founding.dev boots on import.
+#
+# NAMED docker-compose.yml, not docker-compose.preview.yml, and that is load
+# bearing. The platform looks for a primary compose file FIRST; a repo that ships
+# only a preview compose reads as "no compose at all" and gets routed into
+# auto-dockerize, which then generates a second, wrong compose and stalls. The
+# preview-compose opt-in exists for repos that already have their own
+# docker-compose.yml for local dev and need a different one in the cloud - which
+# upstream Zulip does not, so there is nothing here to opt out of.
 #
 # ONE container, deliberately. Zulip's dev environment runs PostgreSQL, Redis,
 # RabbitMQ and memcached locally and its database tooling assumes it (it connects
@@ -21,10 +29,20 @@ services:
     # building Dockerfile.preview by hand.
     image: ${PREVIEW_IMAGE:-zulip-preview:local}
     restart: unless-stopped
+    # Run the entrypoint from the BIND-MOUNTED repo, not the image's baked copy
+    # at /home/zulip/fdev-preview-entrypoint.sh. Two reasons: boot behaviour then
+    # travels with the source the customer owns and the agent can edit, and a fix
+    # to it ships by pushing the template rather than by rebuilding and
+    # re-tagging the preview image. The Dockerfile's CMD stays as the fallback
+    # for a plain `docker run` with no compose.
+    command: ["/home/zulip/zulip/tools/fdev-preview-entrypoint.sh"]
     environment:
       # run-dev builds absolute URLs from this; rewritten by the platform to the
       # preview's real hostname. The default only makes sense on a laptop.
-      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost:9991}
+      # Left EMPTY on purpose - the entrypoint derives it from FLY_APP_NAME.
+      # See tools/fdev-preview-entrypoint.sh for why it is not defaulted here.
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-}
+      FLY_APP_NAME: ${FLY_APP_NAME:-}
       FDEV_STATE_DIR: /srv/zulip-state
     volumes:
       - .:/home/zulip/zulip

@@ -27,6 +27,25 @@ export PATH="$VIRTUAL_ENV/bin:$PATH"
 
 log() { echo "[fdev-preview] $*"; }
 
+# EXTERNAL_HOST is the hostname Zulip builds absolute URLs from and validates the
+# incoming Host header against. It is derived HERE rather than defaulted in the
+# compose file because the platform's only env-injection path rewrites a value to
+# the full public URL, scheme included, and Zulip wants a bare host[:port]. An
+# "https://..." value does not error - it silently produces broken links and a
+# host-check failure, which is far more expensive to diagnose than it looks.
+#
+# FLY_APP_NAME is set on the machine and passed through by compose; the platform
+# serves each preview at https://<app>.fly.dev. Unset means a laptop.
+if [ -z "${EXTERNAL_HOST:-}" ]; then
+  if [ -n "${FLY_APP_NAME:-}" ]; then
+    EXTERNAL_HOST="$FLY_APP_NAME.fly.dev"
+  else
+    EXTERNAL_HOST="localhost:9991"
+  fi
+fi
+export EXTERNAL_HOST
+log "EXTERNAL_HOST=$EXTERNAL_HOST"
+
 # Start the four daemons through the same systemctl shim the image was built
 # with. Using the shim rather than pg_ctlcluster/redis-server/... by hand keeps
 # boot identical to provision-time, so a service that came up during the build
