@@ -93,9 +93,21 @@ services:
       # it looks like a broken deploy rather than a config error.
       SETTING_EXTERNAL_HOST: ${SETTING_EXTERNAL_HOST:-localhost}
       SETTING_ZULIP_ADMINISTRATOR: ${SETTING_ZULIP_ADMINISTRATOR:-support@founding.dev}
-      DB_HOST: database
-      DB_HOST_PORT: "5432"
-      DB_USER: zulip
+      # The 12.x names. The entrypoint vendored in founding/docker/ is from
+      # docker-zulip 12.x, which RENAMED these and refuses to start on the old
+      # ones rather than translating them:
+      #
+      #   DB_HOST -> SETTING_REMOTE_POSTGRES_HOST
+      #   DB_HOST_PORT -> SETTING_REMOTE_POSTGRES_PORT
+      #   DB_USER -> CONFIG_postgresql__database_user
+      #   DISABLE_HTTPS / SSL_CERTIFICATE_GENERATION -> CERTIFICATES
+      #
+      # It exits immediately, and `docker compose up --wait` reports only
+      # "container app-zulip-1 is unhealthy" while swallowing the container's own
+      # output, so the machine restart-loops with the reason invisible.
+      SETTING_REMOTE_POSTGRES_HOST: database
+      SETTING_REMOTE_POSTGRES_PORT: "5432"
+      CONFIG_postgresql__database_user: zulip
       SECRETS_postgres_password: ${POSTGRES_PASSWORD:-zulip}
       SETTING_MEMCACHED_LOCATION: memcached:11211
       SETTING_RABBITMQ_HOST: rabbitmq
@@ -107,8 +119,12 @@ services:
       # credentials, instead of failing the first boot on something they have not
       # been asked for yet.
       SETTING_EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
-      DISABLE_HTTPS: "true"
-      SSL_CERTIFICATE_GENERATION: "self-signed"
+      # EMPTY means "serve plain HTTP, install no certificates" - the entrypoint
+      # sets nginx http_only for exactly this case. Correct here because Fly's
+      # proxy terminates TLS in front of the machine and forwards to port 80;
+      # a self-signed certificate inside would be pointless and would make the
+      # health check fail against its own untrusted cert.
+      CERTIFICATES: ""
     volumes:
       # Uploads, avatars and generated assets. Customer data.
       - zulip-data:/data
