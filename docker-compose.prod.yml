@@ -101,7 +101,12 @@ services:
       # refuses to start without a domain part - "EXTERNAL_HOST (localhost) does
       # not contain a domain part" - so a bare localhost is a crash, not a
       # degraded local default.
-      SETTING_EXTERNAL_HOST: ${SETTING_EXTERNAL_HOST:-${FDEV_PUBLIC_HOST:-localhost.localdomain}}
+      # NOT nested (${SETTING_EXTERNAL_HOST:-${FDEV_PUBLIC_HOST:-...}}). Compose
+      # does not reliably resolve a variable inside another's default: the outer
+      # name is declared-but-empty by the platform's env analysis, so the whole
+      # expression collapsed to the literal fallback and Zulip came up believing
+      # it was localhost.localdomain - answering 400 to every real request.
+      SETTING_EXTERNAL_HOST: ${FDEV_PUBLIC_HOST:-localhost.localdomain}
       SETTING_ZULIP_ADMINISTRATOR: ${SETTING_ZULIP_ADMINISTRATOR:-support@founding.dev}
       # The 12.x names. The entrypoint vendored in founding/docker/ is from
       # docker-zulip 12.x, which RENAMED these and refuses to start on the old
