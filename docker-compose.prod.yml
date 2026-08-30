@@ -135,6 +135,21 @@ services:
       # a self-signed certificate inside would be pointless and would make the
       # health check fail against its own untrusted cert.
       CERTIFICATES: ""
+    # Zulip runs under supervisord, whose config sets minfds=40000. A container's
+    # default nofile limit is far below that on some hosts and exactly 40000 on
+    # others, and supervisor refuses to start unless it is comfortably above:
+    #
+    #   Error: The minimum number of file descriptors required to run this
+    #   process is 40000 ... The current environment will only allow you to open
+    #   40000 file descriptors.
+    #
+    # This lands AFTER the database has been created and every migration has run,
+    # so the boot looks like it is nearly finished when it dies. Matches what
+    # upstream docker-zulip sets for the same reason.
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
     # DECLARED EXPLICITLY, with a start period measured against what Zulip
     # actually does on a first boot: create the database, run every migration and
     # build the initial realm. That is minutes, not seconds.
