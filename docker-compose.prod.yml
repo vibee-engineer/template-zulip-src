@@ -91,7 +91,17 @@ services:
       # Not cosmetic: Zulip builds absolute URLs from this server-side, so a wrong
       # value gives an app that renders and then fails every asset and API call -
       # it looks like a broken deploy rather than a config error.
-      SETTING_EXTERNAL_HOST: ${SETTING_EXTERNAL_HOST:-localhost}
+      # FDEV_PUBLIC_HOST is the app's real public hostname, passed by the control
+      # plane (it is the only thing that knows the customer's subdomain). Zulip
+      # validates the incoming Host header against this and builds every absolute
+      # link from it, so the fly.dev name would not do: customers arrive on the
+      # subdomain and would get links pointing somewhere they are not.
+      #
+      # The fallback is .localdomain rather than plain localhost because Zulip
+      # refuses to start without a domain part - "EXTERNAL_HOST (localhost) does
+      # not contain a domain part" - so a bare localhost is a crash, not a
+      # degraded local default.
+      SETTING_EXTERNAL_HOST: ${SETTING_EXTERNAL_HOST:-${FDEV_PUBLIC_HOST:-localhost.localdomain}}
       SETTING_ZULIP_ADMINISTRATOR: ${SETTING_ZULIP_ADMINISTRATOR:-support@founding.dev}
       # The 12.x names. The entrypoint vendored in founding/docker/ is from
       # docker-zulip 12.x, which RENAMED these and refuses to start on the old
