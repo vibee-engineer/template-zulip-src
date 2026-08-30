@@ -135,6 +135,26 @@ services:
       # a self-signed certificate inside would be pointless and would make the
       # health check fail against its own untrusted cert.
       CERTIFICATES: ""
+    # DECLARED EXPLICITLY, with a start period measured against what Zulip
+    # actually does on a first boot: create the database, run every migration and
+    # build the initial realm. That is minutes, not seconds.
+    #
+    # The image carries its own HEALTHCHECK with a 300s start period, but relying
+    # on it is fragile - the platform re-derives container checks from THIS file
+    # and falls back to a few seconds when a service declares none. The result is
+    # a container killed ~48s in, reported only as "container app-zulip-1 is
+    # unhealthy", while the app was still correctly migrating. Every other
+    # service here reaches Healthy in seconds, which makes this one look broken
+    # when it is merely slow.
+    #
+    # retries x interval after the start period gives another 5 minutes before a
+    # genuinely stuck boot is declared dead, so a real failure still surfaces.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 600s
     volumes:
       # Uploads, avatars and generated assets. Customer data.
       - zulip-data:/data
