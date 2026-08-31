@@ -658,7 +658,10 @@ foundingCreateInitialRealm() {
         return 0
     fi
 
-    local owner_email="${FOUNDING_OWNER_EMAIL:-${SETTING_ZULIP_ADMINISTRATOR:-admin@example.com}}"
+    # Empty is possible (an older control plane that does not pass it), so fall
+    # back rather than create an organization with a blank owner.
+    local owner_email="${FOUNDING_OWNER_EMAIL:-}"
+    [ -n "$owner_email" ] || owner_email="${SETTING_ZULIP_ADMINISTRATOR:-admin@example.com}"
     local org_name="${FOUNDING_ORG_NAME:-Team Chat}"
     local pw_file="$DATA_DIR/founding-owner-password"
 

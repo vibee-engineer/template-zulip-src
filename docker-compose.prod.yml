@@ -120,6 +120,12 @@ services:
       # it was localhost.localdomain - answering 400 to every real request.
       SETTING_EXTERNAL_HOST: ${FDEV_PUBLIC_HOST:-localhost.localdomain}
       SETTING_ZULIP_ADMINISTRATOR: ${SETTING_ZULIP_ADMINISTRATOR:-support@founding.dev}
+      # The organization owner created on first boot. FDEV_OWNER_EMAIL is the
+      # address of whoever pressed Publish, passed by the control plane - without
+      # it the organization ends up owned by the support address above, and the
+      # customer cannot get into the app they just published.
+      FOUNDING_OWNER_EMAIL: ${FDEV_OWNER_EMAIL:-}
+      FOUNDING_ORG_NAME: ${FOUNDING_ORG_NAME:-Team Chat}
       # The 12.x names. The entrypoint vendored in founding/docker/ is from
       # docker-zulip 12.x, which RENAMED these and refuses to start on the old
       # ones rather than translating them:
