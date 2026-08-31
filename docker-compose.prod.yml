@@ -139,6 +139,19 @@ services:
       SETTING_MEMCACHED_LOCATION: memcached:11211
       SETTING_RABBITMQ_HOST: rabbitmq
       SECRETS_rabbitmq_password: ${RABBITMQ_PASSWORD:-zulip}
+      # Accept any Host header. Zulip's default ALLOWED_HOSTS is EXTERNAL_HOST
+      # plus localhost, so it answers 400 to anything else - including the
+      # platform's own health probe, which connects to the machine's private IP
+      # and therefore sends an IP as Host. The app is fully up at that point
+      # (its own /health returns 200), but the probe sees 400, the deploy gate
+      # calls it unhealthy, and the publish rolls back an app that works.
+      #
+      # Safe here specifically: Fly's proxy is the only route in, and Zulip
+      # builds every absolute URL from EXTERNAL_HOST rather than from the
+      # incoming Host header, so a spoofed Host cannot poison a link or an
+      # email. This is the same thing docker-zulip users do behind a reverse
+      # proxy.
+      SETTING_ALLOWED_HOSTS: '["*"]'
       SETTING_REDIS_HOST: redis
       SECRETS_redis_password: ${REDIS_PASSWORD:-zulip}
       SECRETS_secret_key: ${ZULIP_SECRET_KEY:-changemechangemechangemechangeme}
