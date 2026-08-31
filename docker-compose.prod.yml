@@ -151,6 +151,20 @@ services:
       # incoming Host header, so a spoofed Host cannot poison a link or an
       # email. This is the same thing docker-zulip users do behind a reverse
       # proxy.
+      # Zulip REFUSES to serve when it sees X-Forwarded-* headers from an IP it
+      # was not told to trust, and equally refuses when HTTPS is off and there
+      # are no proxy headers at all:
+      #
+      #   Reverse proxy misconfiguration: No proxies configured in Zulip, but
+      #   reverse proxy headers were detected from 172.16.5.162
+      #
+      # It is a 500 on every page, from an app that is otherwise completely
+      # healthy - the deploy looks fine and the site is unusable. Fly's proxy is
+      # the only thing that can reach port 80 here (the machine publishes nothing
+      # else), so trusting the private ranges it arrives from is not a widening
+      # of the attack surface; there is no untrusted path to spoof a header on.
+      TRUST_GATEWAY_IP: "True"
+      LOADBALANCER_IPS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
       SETTING_ALLOWED_HOSTS: '["*"]'
       SETTING_REDIS_HOST: redis
       SECRETS_redis_password: ${REDIS_PASSWORD:-zulip}

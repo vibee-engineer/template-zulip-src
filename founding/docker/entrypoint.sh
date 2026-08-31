@@ -633,12 +633,64 @@ bootstrapEnvironment() {
     fi
     autoBackupConfiguration
 }
+# FOUNDING ADDITION — create the customer's organization on first boot.
+#
+# A freshly installed Zulip has a database and no realm. Visiting / then returns
+# 404 ("no Zulip organization at this subdomain"), which is a problem twice over:
+# the deploy health gate probes / and reads 404 as a failed deploy, and a customer
+# who reached the page would have nowhere to go.
+#
+# The normal way to make an organization is a web flow that emails a confirmation
+# link. Our customers have no SMTP configured, so that flow is a dead end for
+# them — they would land on a page whose only button leads to an email that never
+# arrives. Creating the organization here removes the dead end: / becomes the
+# login page, which is what they expect and what the health gate accepts.
+#
+# Guarded on the realm actually being absent, not on a marker file: the check is
+# against the database, so it stays correct across machine replacement, volume
+# forks, and restores — the situations a marker gets wrong.
+foundingCreateInitialRealm() {
+    local mp="/home/zulip/deployments/current/manage.py"
+    [ -x "$mp" ] || mp="/home/zulip/deployments/current/manage.py"
+
+    if su zulip -c "$mp shell -c 'from zerver.models import Realm; import sys; sys.exit(0 if Realm.objects.exists() else 1)'" >/dev/null 2>&1; then
+        echo "Organization already exists; leaving it alone."
+        return 0
+    fi
+
+    local owner_email="${FOUNDING_OWNER_EMAIL:-${SETTING_ZULIP_ADMINISTRATOR:-admin@example.com}}"
+    local org_name="${FOUNDING_ORG_NAME:-Team Chat}"
+    local pw_file="$DATA_DIR/founding-owner-password"
+
+    # The password is generated ONCE and kept on the data volume, so a redeploy
+    # does not silently change the customer's credentials underneath them.
+    if [ ! -s "$pw_file" ]; then
+        (umask 077; tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 > "$pw_file") || true
+    fi
+    chmod 600 "$pw_file" 2>/dev/null || true
+    chown zulip:zulip "$pw_file" 2>/dev/null || true
+
+    echo "Creating the initial organization \"$org_name\" with owner $owner_email ..."
+    # string_id="" puts the realm on the root domain, which is the only place a
+    # single-tenant deployment should serve it from.
+    # Argument ORDER matters: `--string-id=''` before the positionals makes
+    # argparse swallow them ("unrecognized arguments: <email> Owner"). The
+    # separated form with the flags first is the one that works.
+    if su zulip -c "$mp create_realm --string-id \"\" --password-file='$pw_file' '$org_name' '$owner_email' 'Owner'"; then
+        echo "Organization created. Owner: $owner_email"
+        echo "Owner password is stored in the app's data volume at $pw_file"
+    else
+        echo "WARNING: could not create the initial organization; / will 404 until one exists."
+    fi
+}
+
 initialConfiguration() {
     echo "=== Begin Initial Configuration Phase ==="
     bootstrapEnvironment
     waitingForDatabase
     zulipMigration
     runPostSetupScripts
+    foundingCreateInitialRealm
     echo "=== End Initial Configuration Phase ==="
 }
 # END appRun functions
