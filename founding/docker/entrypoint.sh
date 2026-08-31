@@ -665,10 +665,26 @@ foundingCreateInitialRealm() {
     local org_name="${FOUNDING_ORG_NAME:-Team Chat}"
     local pw_file="$DATA_DIR/founding-owner-password"
 
-    # The password is generated ONCE and kept on the data volume, so a redeploy
-    # does not silently change the customer's credentials underneath them.
+    # PREFER the password the control plane passed us.
+    #
+    # It is the only one the customer can ever be told: a password this container
+    # invents lives nowhere but this disk, so no screen can show it and Zulip's
+    # "forgot password" needs SMTP the customer has not configured. With the
+    # platform as the source, their Publish panel can simply display it.
+    #
+    # Written to the volume anyway, so it survives a machine replacement and so
+    # this file stays the single answer to "what is the password" regardless of
+    # which side produced it. Only written when ABSENT — if the customer has since
+    # changed their password inside Zulip, overwriting this would replace a value
+    # they chose with one they never saw.
     if [ ! -s "$pw_file" ]; then
-        (umask 077; tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 > "$pw_file") || true
+        if [ -n "${FDEV_APP_ADMIN_PASSWORD:-}" ]; then
+            (umask 077; printf '%s' "$FDEV_APP_ADMIN_PASSWORD" > "$pw_file") || true
+        else
+            # No password supplied (an older control plane). The app still works;
+            # the customer just cannot be shown the credentials.
+            (umask 077; tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 > "$pw_file") || true
+        fi
     fi
     chmod 600 "$pw_file" 2>/dev/null || true
     chown zulip:zulip "$pw_file" 2>/dev/null || true
