@@ -231,6 +231,17 @@ const config = (
         },
         plugins,
         devServer: {
+            // The founding.dev preview serves this dev server through a proxy on
+            // a *.fly.dev hostname. webpack-dev-server's default host check sees
+            // a Host it does not recognise and answers every bundle request with
+            // 403 "Invalid Host header" - nineteen bytes, no logging, and the
+            // app sits on its loading spinner forever because none of its
+            // JavaScript ever arrives.
+            //
+            // Safe: this server only ever serves build output, it binds inside a
+            // single-tenant container, and it is reachable only through that
+            // proxy. It is also dev-only and never part of a production image.
+            allowedHosts: "all",
             client: {
                 overlay: {
                     runtimeErrors: false,

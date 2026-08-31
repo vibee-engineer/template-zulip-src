@@ -49,6 +49,19 @@ services:
       # See tools/fdev-preview-entrypoint.sh for why it is not defaulted here.
       EXTERNAL_HOST: ${EXTERNAL_HOST:-}
       FLY_APP_NAME: ${FLY_APP_NAME:-}
+      # THE PREVIEW IS SERVED OVER HTTPS. Fly terminates TLS and forwards plain
+      # HTTP, so without this Zulip believes its own scheme is http:// and emits
+      # every script and stylesheet as an ABSOLUTE http:// URL into a page the
+      # browser loaded over https. The browser blocks all of it as mixed content,
+      # so the app renders its loading spinner and never advances - "If this
+      # message does not go away, try reloading the page", forever, on a server
+      # that is answering 200 to everything asked of it.
+      #
+      # Zulip's own flag for exactly this deployment shape (see
+      # zproject/dev_settings.py): it flips EXTERNAL_URI_SCHEME to https:// and
+      # adds the matching CSRF_TRUSTED_ORIGINS, which POSTs need for the same
+      # reason.
+      BEHIND_HTTPS_PROXY: "1"
       FDEV_STATE_DIR: /srv/zulip-state
     volumes:
       - .:/home/zulip/zulip
