@@ -40,6 +40,29 @@ normalize_bool() {
 ## Settings
 
 # PostgreSQL
+# EXTERNAL_HOST must be a BARE host — strip a scheme and any trailing slash.
+#
+# Zulip removes the "port" from this value by splitting on ':', so a URL like
+# https://app.example.com yields FAKE_EMAIL_DOMAIN="https", which fails Django's
+# email validation and takes the whole organization-creation step down with it:
+#
+#   ValidationError: ['Enter a valid email address.']  (in get_fake_email_domain)
+#
+# What that leaves behind is the confusing part — the realm IS created and the
+# OWNER IS NOT, so the app serves a login page for an account that does not
+# exist and every correct password is reported as "Incorrect".
+#
+# Sanitised here rather than trusted from the platform because the value arrives
+# through a generic env pipeline that fills URL-shaped variables with the app's
+# full public URL. Being defensive costs one line and survives that pipeline
+# changing.
+if [ -n "${SETTING_EXTERNAL_HOST:-}" ]; then
+    SETTING_EXTERNAL_HOST="${SETTING_EXTERNAL_HOST#http://}"
+    SETTING_EXTERNAL_HOST="${SETTING_EXTERNAL_HOST#https://}"
+    SETTING_EXTERNAL_HOST="${SETTING_EXTERNAL_HOST%%/*}"
+    export SETTING_EXTERNAL_HOST
+fi
+
 SETTING_REMOTE_POSTGRES_HOST="${SETTING_REMOTE_POSTGRES_HOST:-127.0.0.1}"
 SETTING_REMOTE_POSTGRES_SSLMODE="${SETTING_REMOTE_POSTGRES_SSLMODE:-prefer}"
 
