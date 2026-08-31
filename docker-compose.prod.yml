@@ -73,6 +73,18 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # requirepass, because Zulip AUTHENTICATES to redis whether or not anyone
+    # configured a password: its installer generates redis_password into the
+    # secrets file, and every query then sends AUTH. A stock redis with no
+    # password does not ignore that - it rejects it:
+    #
+    #   AUTH <password> called without any password configured for the default
+    #   user. Are you sure your configuration is correct?
+    #
+    # which surfaces as a 500 on every page and "Cannot query redis" in the
+    # health endpoint, with redis itself perfectly healthy. Both sides read the
+    # same variable, exactly as postgres and rabbitmq already do here.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-zulip}", "--appendonly", "yes"]
     volumes:
       - zulip-redis:/data
     expose:
@@ -128,6 +140,7 @@ services:
       SETTING_RABBITMQ_HOST: rabbitmq
       SECRETS_rabbitmq_password: ${RABBITMQ_PASSWORD:-zulip}
       SETTING_REDIS_HOST: redis
+      SECRETS_redis_password: ${REDIS_PASSWORD:-zulip}
       SECRETS_secret_key: ${ZULIP_SECRET_KEY:-changemechangemechangemechangeme}
       # Zulip refuses to start without an email backend configured; the console
       # backend keeps a fresh deployment working before the customer has any SMTP
